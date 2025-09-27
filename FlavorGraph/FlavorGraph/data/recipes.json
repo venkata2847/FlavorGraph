@@ -1,0 +1,26 @@
+[
+  {
+    "id": "cheese_omelette",
+    "title": "Cheese Omelette",
+    "ingredients": ["egg", "cheese", "milk", "salt", "pepper"],
+    "roles": {"egg": "binder"}
+  },
+  {
+    "id": "banana_pancake",
+    "title": "Banana Pancake",
+    "ingredients": ["flour", "milk", "egg", "banana", "sugar"],
+    "roles": {"egg": "binder"}
+  },
+  {
+    "id": "banana_muffin",
+    "title": "Banana Muffin",
+    "ingredients": ["flour", "sugar", "banana", "milk", "baking_powder"],
+    "roles": {}
+  },
+  {
+    "id": "scrambled_eggs",
+    "title": "Scrambled Eggs",
+    "ingredients": ["egg", "milk", "salt", "butter"],
+    "roles": {"egg": "primary"}
+  }
+]
