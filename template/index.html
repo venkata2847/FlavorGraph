@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Recipe Suggester</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg width="36" height="36" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 2L3 7v7c0 5 4 8 9 8s9-3 9-8V7l-9-5z"/>
+        </svg>
+        <div>
+          <h1>Recipe Suggester</h1>
+          <p class="muted">Find recipes from what’s in your pantry — with substitutions & gap analysis</p>
+        </div>
+      </div>
+      <div class="controls">
+        <label class="switch">
+          <input id="allowSubst" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
+        <span class="muted small">Allow substitutions</span>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="panel">
+        <form id="ingredients-form" class="input-area" onsubmit="return false;">
+          <div class="input-header">
+            <label for="ing-input">Your ingredients</label>
+            <div class="small muted">Type ingredient & press Enter or “,”</div>
+          </div>
+
+          <div id="chip-wrap" class="chip-wrap" tabindex="0">
+            <input id="ing-input" class="chip-input" placeholder="e.g. eggs, milk, flour" autofocus />
+            <button id="pasteBtn" type="button" class="btn ghost">Paste</button>
+            <button id="clearBtn" type="button" class="btn ghost">Clear</button>
+            <button id="submitBtn" type="button" class="btn primary">Suggest</button>
+          </div>
+
+          <div id="hint" class="hint muted">You can paste a comma-separated list or add items one-by-one.</div>
+        </form>
+      </section>
+
+      <section class="panel results-panel">
+        <div class="results-header">
+          <h2 id="resultsTitle">Suggestions</h2>
+          <div class="action-row">
+            <div id="spinner" class="spinner hidden" aria-hidden="true"></div>
+            <div id="summary" class="muted small">Enter ingredients and press Suggest</div>
+          </div>
+        </div>
+
+        <div id="results" class="results-grid" aria-live="polite"></div>
+
+        <aside id="shopping" class="shopping-panel hidden">
+          <h3>Shopping list (top results)</h3>
+          <ul id="shoppingList"></ul>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="foot muted">
+      Tips: use the toggle to allow substitutions. Substitutions that match your pantry will be used automatically.
+    </footer>
+  </div>
+
+  <script>
+    // --- simple chip input & UI logic ---
+    const ingInput = document.getElementById('ing-input');
+    const chipWrap = document.getElementById('chip-wrap');
+    const submitBtn = document.getElementById('submitBtn');
+    const pasteBtn = document.getElementById('pasteBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const resultsEl = document.getElementById('results');
+    const spinner = document.getElementById('spinner');
+    const summary = document.getElementById('summary');
+    const allowSubst = document.getElementById('allowSubst');
+    const shoppingPanel = document.getElementById('shopping');
+    const shoppingList = document.getElementById('shoppingList');
+
+    let ingredients = [];
+
+    function renderChips(){
+      // remove existing chips (except input and buttons)
+      const existing = Array.from(chipWrap.querySelectorAll('.chip'));
+      existing.forEach(c => c.remove());
+      // insert chips before input
+      ingredients.forEach((ing, idx) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip';
+        chip.innerHTML = `<span>${ing}</span><svg class="x" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+        chip.addEventListener('click', () => { ingredients.splice(idx,1); renderChips(); });
+        chipWrap.insertBefore(chip, ingInput);
+      });
+      ingInput.value = '';
+      ingInput.focus();
+    }
+
+    function addIngredient(raw){
+      const cleaned = raw.trim().toLowerCase();
+      if(!cleaned) return;
+      // split if multiple comma-separated
+      cleaned.split(',').map(s=>s.trim()).filter(Boolean).forEach(s=>{
+        if(!ingredients.includes(s)) ingredients.push(s);
+      });
+      renderChips();
+    }
+
+    ingInput.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' || e.key === ','){
+        e.preventDefault();
+        addIngredient(ingInput.value);
+      } else if(e.key === 'Backspace' && ingInput.value === '' && ingredients.length){
+        // remove last
+        ingredients.pop();
+        renderChips();
+      }
+    });
+
+    pasteBtn.addEventListener('click', async ()=>{
+      try{
+        const text = await navigator.clipboard.readText();
+        addIngredient(text);
+      }catch(e){
+        // fallback prompt
+        const t = prompt('Paste ingredients (comma separated)');
+        if(t) addIngredient(t);
+      }
+    });
+
+    clearBtn.addEventListener('click', ()=>{
+      ingredients = [];
+      renderChips();
+      resultsEl.innerHTML = '';
+      shoppingPanel.classList.add('hidden');
+      summary.textContent = 'Cleared';
+    });
+
+    submitBtn.addEventListener('click', fetchSuggestions);
+
+    async function fetchSuggestions(){
+      if(ingredients.length === 0){
+        summary.textContent = 'Add at least one ingredient.';
+        return;
+      }
+      resultsEl.innerHTML = '';
+      spinner.classList.remove('hidden');
+      summary.textContent = 'Searching...';
+
+      const body = { ingredients, max_results: 12, allow_subst: allowSubst.checked };
+      try {
+        const res = await fetch('/api/suggest', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        if(!res.ok){ throw new Error('Server error '+res.status); }
+        const data = await res.json();
+        renderResults(data);
+      } catch(err){
+        summary.textContent = 'Error: ' + (err.message || err);
+      } finally {
+        spinner.classList.add('hidden');
+      }
+    }
+
+    function renderResults(list){
+      resultsEl.innerHTML = '';
+      shoppingList.innerHTML = '';
+      if(!list || list.length === 0){
+        summary.textContent = 'No matches found.';
+        return;
+      }
+      summary.textContent = `${list.length} suggestions`;
+      const aggregate = {};
+
+      list.forEach(item=>{
+        // card
+        const card = document.createElement('article');
+        card.className = 'card';
+        const scoreBar = Math.max(0, Math.min(100, Math.round(item.score * 100)));
+        const miss = item.missing_ingredients || [];
+        // accumulate shopping
+        miss.forEach(m => aggregate[m] = (aggregate[m]||0)+1);
+
+        let subsHTML = '';
+        if(item.substitution_plan && Object.keys(item.substitution_plan).length){
+          subsHTML = '<ul class="subs">';
+          for(const k in item.substitution_plan){
+            const v = item.substitution_plan[k];
+            subsHTML += `<li><strong>${k}</strong> → <em>${v.substitute}</em> <span class="pill">score ${v.score}</span></li>`;
+          }
+          subsHTML += '</ul>';
+        }
+
+        card.innerHTML = `
+          <header class="card-head">
+            <h3>${escapeHtml(item.name)}</h3>
+            <div class="score-wrap" title="Match score: ${item.score}"><div class="score" style="--w:${scoreBar}%;"></div></div>
+          </header>
+          <div class="card-body">
+            <p class="muted small">Missing: ${miss.length ? escapeHtml(miss.join(', ')) : '<strong>None</strong>'}</p>
+            ${subsHTML}
+          </div>
+          <footer class="card-foot">
+            <button class="btn small outline" onclick="showRecipe(${item.recipe_id})">View</button>
+            <button class="btn small" onclick="addToPantrySuggested(${JSON.stringify(item.missing_ingredients)})">Add missing to pantry</button>
+          </footer>
+        `;
+        resultsEl.appendChild(card);
+      });
+
+      // shopping list from aggregate (top 8)
+      const entries = Object.entries(aggregate).sort((a,b)=>b[1]-a[1]).slice(0,12);
+      if(entries.length){
+        shoppingPanel.classList.remove('hidden');
+        entries.forEach(([name,count])=>{
+          const li = document.createElement('li');
+          li.textContent = `${name} — recommended for ${count} recipe(s)`;
+          shoppingList.appendChild(li);
+        });
+      } else {
+        shoppingPanel.classList.add('hidden');
+      }
+    }
+
+    // small helpers
+    function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    function showRecipe(id){
+      alert('Open recipe details - backend endpoint: /api/recipe/' + id);
+    }
+
+    function addToPantrySuggested(arr){
+      (arr || []).forEach(i => addIngredient(i));
+      renderChips();
+      summary.textContent = 'Missing items added to your pantry (chips).';
+    }
+
+    // init focus
+    chipWrap.addEventListener('click', ()=> ingInput.focus());
+  </script>
+</body>
+</html>
